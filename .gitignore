@@ -66,3 +66,10 @@ jspm_packages/
 python_modules/
 .venv/
 .venv-workers/
+
+# Editor
+.vscode/
+
+# SO
+.DS_Store
+Thumbs.db
