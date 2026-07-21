@@ -1,5 +1,13 @@
-from workers import Response, WorkerEntrypoint
-from submodule import get_hello_message
+from workers import WorkerEntrypoint
+from fastapi import FastAPI
+
+app = FastAPI()
+
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
-        return Response(get_hello_message())
+        import asgi
+        return await asgi.fetch(app, request, self.env)
+
+@app.get("/")
+async def root():
+    return {"message": "Hello, World!"}
