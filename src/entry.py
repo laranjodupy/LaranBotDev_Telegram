@@ -1,5 +1,6 @@
-from workers import WorkerEntrypoint
+from workers import WorkerEntrypoint, fetch
 from fastapi import FastAPI, Request
+import json
 
 app = FastAPI()
 
@@ -12,8 +13,28 @@ class Default(WorkerEntrypoint):
 async def root():
     return {"message": "Hello, World!"}
 
-@app.post('/webhook')
+@app.post("/webhook")
 async def telegram_webhook(request: Request):
     update = await request.json()
-    print(update) #Simples, só para ver o que está chegando no terminal
+    print(update)
+
+    message = update.get("message")
+    if message and message.get("text") == "/ping":
+        chat_id = message["chat"]["id"]
+        env = request.scope["env"]  # como pegar o env dentro de uma rota FastAPI
+        await send_message(env, chat_id, "pong")
+
     return {"ok": True}
+
+
+async def send_message(env, chat_id: int, text: str):
+    url = f"https://api.telegram.org/bot{env.BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+
+    response = await fetch(
+        url,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+        body=json.dumps(payload),
+    )
+    return await response.json()
