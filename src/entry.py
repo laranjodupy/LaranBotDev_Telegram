@@ -21,8 +21,9 @@ async def telegram_webhook(request: Request):
     message = update.get("message")
     if message and message.get("text") == "/ping":
         chat_id = message["chat"]["id"]
-        env = request.scope["env"]  # como pegar o env dentro de uma rota FastAPI
-        await send_message(env, chat_id, "pong")
+        env = request.scope["env"] #aqui recebe o env 
+        result = await send_message(env, chat_id, "pong")
+        print("Resposta do Telegram:", result)  # <- visibilidade do que aconteceu
 
     return {"ok": True}
 
