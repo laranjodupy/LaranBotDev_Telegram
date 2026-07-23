@@ -13,11 +13,11 @@
 	"observability": {
 		"enabled": true
 	},
-	"d1_databases": [{
-    "binding": "DB",
-    "database_name": "laranbot-db",
-    "database_id": "6557502c-e88c-4faf-b8a0-e1798802fc5f",
-	"migrations_dir": "migrations"
+	"d1_databases": [{ // aqui você pode mudar tudo, se souber o que está fazendo 
+    "binding": "DB", //o binding é como você vai "chamar" a database no código  
+    "database_name": "laranbot-db", //nome da sua database na cloudflare
+    "database_id": "6557502c-e88c-4faf-b8a0-e1798802fc5f",  //uuid dela (nao adianta tentar usar ela, porque precisa de autenticação de conta na cloudflare)
+	"migrations_dir": "migrations" //pasta onde você vai aplicar e testar os códigos sql (seja em --remote ou --local)
  }
 ],
 	"ai": {
