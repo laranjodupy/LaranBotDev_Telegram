@@ -12,7 +12,14 @@
 	],
 	"observability": {
 		"enabled": true
-	}
+	},
+	"d1_databases": [{
+    "binding": "DB",
+    "database_name": "laranbot-db",
+    "database_id": "6557502c-e88c-4faf-b8a0-e1798802fc5f",
+	"migrations_dir": "migrations"
+ }
+]
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

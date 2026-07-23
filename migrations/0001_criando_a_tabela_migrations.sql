@@ -1,0 +1,8 @@
+-- Migration number: 0001 	 2026-07-23T12:34:01.220Z
+CREATE TABLE IF NOT EXISTS todos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL,
+  texto TEXT NOT NULL,
+  feito INTEGER NOT NULL DEFAULT 0,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
