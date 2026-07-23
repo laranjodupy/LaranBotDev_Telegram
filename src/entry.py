@@ -22,19 +22,31 @@ async def root():
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    update = await request.json()
+    update = await request.json() #O update recebe o json do request e depois disso é possível tratar os dados
     print(update)
 
     message = update.get("message")
     if message and message.get("text") == "/start":
         chat_id = message["chat"]["id"]
         env = request.scope["env"]
-        await send_message(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> No momento temos duas funções: /ping (retorna um pong), /myid (retorna o seu id de chat)") #/start simples do bot, padrão
+        await send_message(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto]") #/start simples do bot, padrão
         
     if message and message.get("text") == "/myid":
         chat_id = message["chat"]["id"]
         env = request.scope["env"]
         await send_message(env, chat_id, f"Seu chat_id é: {chat_id}") #Adicionando essa função para facilitar quando o dev precisar saber o chat_id
+        
+    if message and message.get("text", "").startswith("/ia"):
+        chat_id = message["chat"]["id"]
+        pergunta = message["text"][len("/ia"):].strip() #o strip apaga apenas os espaços que não estão entre as palavras/caracteres, assim conseguimos tratar a pergunta e fazer a IA ler apenas o que vem após o /ia utilizando o slicing de string.
+        env = request.scope["env"]
+        if not pergunta: # se não houver nada na pergunta
+            await send_message(env, chat_id, "Não mandou nada? Para utilizar o comando, utilize assim: /ia sua pergunta aqui")
+        else: 
+            resposta = await perguntar_ia(env, pergunta)
+            resultado_envio = await send_message(env, chat_id, resposta)
+            print("Resultado do envio para fins de teste: ", resultado_envio)
+        
 
     return {"ok": True}
 
@@ -83,3 +95,14 @@ async def send_message(env, chat_id: int, text: str):
         body=json.dumps(payload),
     )
     return await response.json()
+
+async def perguntar_ia(env, pergunta: str) -> str:
+    resultado = await env.AI.run(
+        "@cf/meta/llama-4-scout-17b-16e-instruct", {
+        "messages": [
+            {"role": "system", "content": "Você é o LaranBot, assistente pessoal via Telegram. Responda curto, direto, em português."}, #aqui é a persona que você vai alterar a persona da IA, caso queira
+            {"role": "user", "content": pergunta} #aqui é onde a pergunta vai entrar
+        ]
+    },
+    ) 
+    return resultado.get("response", "Não consegui pensar em uma resposta agora.") #Não se confunda, ele retorna o response (resposta), mas se der ruim ele retorna o texto "Não consegui pensar em uma resposta agora."
