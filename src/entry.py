@@ -26,12 +26,17 @@ async def telegram_webhook(request: Request):
     print(update)
 
     message = update.get("message")
+    callback = update.get("callback_query")
     if message and message.get("text") == "/start":
         chat_id = message["chat"]["id"]
         env = request.scope["env"]
+        botoes = [
+            [{"text": "Meu Id", "callback_data": "myid"}],
+            [{"text": "Vitor eh?", "callback_data": "vitu"}]
+        ]
         await send_message(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto]") #/start simples do bot, padrão
         
-    if message and message.get("text") == "/myid":
+    if message and message.get("text") == "/myid": #ainda não fui muito a fundo para saber se o message.get() serve apenas para text
         chat_id = message["chat"]["id"]
         env = request.scope["env"]
         await send_message(env, chat_id, f"Seu chat_id é: {chat_id}") #Adicionando essa função para facilitar quando o dev precisar saber o chat_id
@@ -46,8 +51,7 @@ async def telegram_webhook(request: Request):
             resposta = await perguntar_ia(env, pergunta)
             resultado_envio = await send_message(env, chat_id, resposta)
             print("Resultado do envio para fins de teste: ", resultado_envio)
-        
-
+            
     return {"ok": True}
 
 @app.post("/todos")
@@ -106,3 +110,30 @@ async def perguntar_ia(env, pergunta: str) -> str:
     },
     ) 
     return resultado.get("response", "Não consegui pensar em uma resposta agora.") #Não se confunda, ele retorna o response (resposta), mas se der ruim ele retorna o texto "Não consegui pensar em uma resposta agora."
+
+
+async def send_message_com_botoes(env, chat_id: int, text: str, botoes: list): #aqui é onde vamos colocar botões de clique para o nosso bot e facilitar a ux.
+    url = f"https://api.telegram.org/bot{env.BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": {"inline_keyboard": botoes},
+    }
+    response = await fetch(
+        url,
+        method="POST",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        body=json.dumps(payload),
+    )
+    return await response.json()
+
+#Ponto importante: o callbackquery não envia uma message, então você precisa utilizar o endpoint /answerCallbackQuery para obter a resposta do clique do botão, senão fica todo bugado com um carregando na tela do usuario
+async def responder_callback(env, callback_query_id: str):
+    url = f"https://api.telegram.org/bot{env.BOT_TOKEN}/answerCallbackQuery"
+    payload = {"callback_query_id": callback_query_id}
+    await fetch(
+        url,
+        method="POST",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        body=json.dumps(payload),
+    )
