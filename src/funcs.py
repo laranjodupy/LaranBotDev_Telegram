@@ -1,1 +1,0 @@
-#lugar onde vou deixar as funções para deixar o código entry.py mais limpo (Ideia futura)
