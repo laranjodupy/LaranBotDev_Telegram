@@ -1,3 +1,19 @@
+"""entry.py — LaranBotDev (versão simples, monolítica)
+
+Ponto de entrada único do Worker. Esta é a versão "fácil" do framework:
+toda a lógica (rotas HTTP, comandos do bot, acesso ao D1, chamadas à API
+do Telegram e à Workers AI) mora neste único arquivo, de propósito — o
+objetivo desta branch é que alguém consiga clonar o repositório, ler um
+arquivo só, e entender o fluxo completo sem precisar navegar entre módulos.
+
+Arquitetura, em uma frase: o Telegram manda um POST para /webhook -> o
+FastAPI processa a rota certa -> a função correspondente chama a API do
+Telegram de volta (sendMessage) e/ou consulta o banco D1.
+
+Para a versão modular (múltiplos arquivos, roteador de comandos, etc.),
+veja a branch "framework-avancado".
+"""
+
 from workers import WorkerEntrypoint, fetch
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
@@ -6,23 +22,102 @@ import json
 
 app = FastAPI()
 
+
 class Default(WorkerEntrypoint):
+    """Classe de entrada exigida pelo runtime dos Cloudflare Workers.
+
+    O nome "Default" e a herança de `WorkerEntrypoint` não são opcionais —
+    é assim que o `workerd` (o runtime da Cloudflare) identifica qual
+    classe deste arquivo deve tratar as requisições recebidas pelo Worker.
+    """
+
     async def fetch(self, request):
+        """Ponto de entrada de TODA requisição HTTP recebida pelo Worker.
+
+        Não contém lógica própria: delega tudo para o FastAPI através da
+        ponte ASGI (`asgi.fetch`), que traduz o `Request` nativo do Worker
+        para o formato que o FastAPI entende (e vice-versa na resposta).
+
+        Args:
+            request: objeto `Request` nativo do runtime da Cloudflare —
+                representa a requisição HTTP recebida (headers, corpo,
+                método, URL).
+
+        Returns:
+            Response: objeto `Response` nativo do Worker, já traduzido a
+                partir do que a rota do FastAPI correspondente devolveu.
+        """
         import asgi
         return await asgi.fetch(app, request, self.env)
-    
+
+
 class TodoCreate(BaseModel):
+    """Formato esperado no corpo (body) de um POST em /todos.
+
+    O FastAPI usa esta classe para validar automaticamente a requisição
+    antes de a rota `criar_todo` ser executada — se `chat_id` não for um
+    inteiro, ou se `texto` não vier preenchido, o FastAPI já responde com
+    erro 422 sozinho, sem a rota precisar validar nada manualmente.
+
+    Attributes:
+        chat_id (int): identificador do chat do Telegram, dono da tarefa.
+        texto (str): descrição da tarefa a ser criada.
+    """
     chat_id: int
     texto: str
 
 
 @app.get("/")
-async def root():
+async def root() -> dict:
+    """Rota de health check (verificação simples de que o Worker está no ar).
+
+    Aceita apenas GET — é a rota que responde normalmente se você abrir a
+    URL do Worker direto no navegador.
+
+    Returns:
+        dict: mensagem fixa de confirmação, ex.: {"message": "Hello, World!"}.
+    """
     return {"message": "Hello, World!"}
 
+
 @app.post("/webhook")
-async def telegram_webhook(request: Request):
-    update = await request.json() #O update recebe o json do request e depois disso é possível tratar os dados
+async def telegram_webhook(request: Request) -> dict:
+    """Recebe TODO update que o Telegram envia para este bot.
+
+    É o Telegram quem chama esta rota — nunca o usuário final diretamente.
+    A cada mensagem enviada ao bot (ou clique em botão, ver nota abaixo),
+    o Telegram faz um POST aqui com um JSON no formato "Update".
+
+    Fluxo:
+        1. Lê e faz o parse do corpo JSON da requisição.
+        2. Verifica se o update é uma mensagem de texto (`message`) e,
+           se for, checa qual comando foi enviado (`/start`, `/myid`, `/ia`).
+        3. Chama `send_message` (ou `perguntar_ia` + `send_message`) para
+           responder ao usuário.
+        4. Sempre devolve {"ok": True} — o Telegram espera uma resposta
+           HTTP 200 rápida confirmando o recebimento; se não vier, ele
+           reenvia o mesmo update depois.
+
+    Nota importante sobre o objeto `Update` do Telegram: um update tem, no
+    máximo, um dos campos opcionais preenchido por vez — ou vem `message`
+    (mensagem de texto), ou vem `callback_query` (clique num botão
+    inline), nunca os dois juntos. Por isso os dois são capturados
+    separadamente logo no início da função.
+
+    TODO (pendente, próximo item do roadmap): o tratamento de
+    `callback_query` (cliques em botão) ainda não está implementado nesta
+    função — a variável `callback` é capturada, mas nenhuma ação é tomada
+    quando ela vem preenchida. Ver também: `botoes`/`send_message_com_botoes`,
+    que hoje é construído mas nunca de fato enviado ao usuário.
+
+    Args:
+        request (Request): requisição HTTP recebida, com o "Update" do
+            Telegram no corpo, em formato JSON.
+
+    Returns:
+        dict: sempre {"ok": True}, confirmando o recebimento ao Telegram.
+    """
+    update = await request.json()  # O update recebe o json do request e depois disso é possível tratar os dados
     print(update)
 
     message = update.get("message")
@@ -34,61 +129,137 @@ async def telegram_webhook(request: Request):
             [{"text": "Meu Id", "callback_data": "myid"}],
             [{"text": "Vitor eh?", "callback_data": "vitu"}]
         ]
-        await send_message(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto]") #/start simples do bot, padrão
-        
-    if message and message.get("text") == "/myid": #ainda não fui muito a fundo para saber se o message.get() serve apenas para text
+        await send_message(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto]")  # /start simples do bot, padrão
+
+    if message and message.get("text") == "/myid":  # ainda não fui muito a fundo para saber se o message.get() serve apenas para text
         chat_id = message["chat"]["id"]
         env = request.scope["env"]
-        await send_message(env, chat_id, f"Seu chat_id é: {chat_id}") #Adicionando essa função para facilitar quando o dev precisar saber o chat_id
-        
+        await send_message(env, chat_id, f"Seu chat_id é: {chat_id}")  # Adicionando essa função para facilitar quando o dev precisar saber o chat_id
+
     if message and message.get("text", "").startswith("/ia"):
         chat_id = message["chat"]["id"]
-        pergunta = message["text"][len("/ia"):].strip() #o strip apaga apenas os espaços que não estão entre as palavras/caracteres, assim conseguimos tratar a pergunta e fazer a IA ler apenas o que vem após o /ia utilizando o slicing de string.
+        pergunta = message["text"][len("/ia"):].strip()  # o strip apaga apenas os espaços que não estão entre as palavras/caracteres, assim conseguimos tratar a pergunta e fazer a IA ler apenas o que vem após o /ia utilizando o slicing de string.
         env = request.scope["env"]
-        if not pergunta: # se não houver nada na pergunta
+        if not pergunta:  # se não houver nada na pergunta
             await send_message(env, chat_id, "Não mandou nada? Para utilizar o comando, utilize assim: /ia sua pergunta aqui")
-        else: 
+        else:
             resposta = await perguntar_ia(env, pergunta)
             resultado_envio = await send_message(env, chat_id, resposta)
             print("Resultado do envio para fins de teste: ", resultado_envio)
-            
+
     return {"ok": True}
 
+
 @app.post("/todos")
-async def criar_todo(todo: TodoCreate, request: Request):
+async def criar_todo(todo: TodoCreate, request: Request) -> dict:
+    """Cria uma nova tarefa (to-do) associada a um chat do Telegram.
+
+    Args:
+        todo (TodoCreate): corpo da requisição já validado pelo FastAPI —
+            contém `chat_id` (int) e `texto` (str). Ver classe `TodoCreate`.
+        request (Request): usado só para acessar `request.scope["env"]`,
+            de onde vem o binding `DB` do Cloudflare D1.
+
+    Returns:
+        dict: {"ok": True} confirmando a criação.
+    """
     env = request.scope["env"]
     await env.DB.prepare(
         "INSERT INTO todos (chat_id, texto) VALUES (?, ?)"
     ).bind(todo.chat_id, todo.texto).run()
     return {"ok": True}
 
+
 @app.get("/todos")
 async def listar_todos(chat_id: int, request: Request):
+    """Lista todas as tarefas de um chat específico.
+
+    Args:
+        chat_id (int): query parameter obrigatório (`?chat_id=123`) —
+            identifica de quem são as tarefas a listar.
+        request (Request): usado para acessar `request.scope["env"]`.
+
+    Returns:
+        O resultado bruto de `.all()` do binding D1 — um objeto contendo,
+        entre outros campos, a lista de linhas encontradas (cada linha com
+        `id`, `texto` e `feito`). Ordenado por `id` crescente.
+    """
     env = request.scope["env"]
     resultado = await env.DB.prepare(
         "SELECT id, texto, feito FROM todos WHERE chat_id = ? ORDER BY id"
     ).bind(chat_id).all()
     return resultado
 
+
 @app.post("/todos/{todo_id}/concluir")
-async def concluir_todo(todo_id: int, request: Request):
+async def concluir_todo(todo_id: int, chat_id: int, request: Request) -> dict:
+    """Marca uma tarefa como concluída (feito = 1).
+
+    Nota de segurança: a query exige `id` E `chat_id` corretos ao mesmo
+    tempo (`WHERE id = ? AND chat_id = ?`). Sem o `chat_id`, qualquer
+    pessoa que soubesse (ou chutasse) um `todo_id` conseguiria concluir a
+    tarefa de outro usuário — por isso `chat_id` é obrigatório aqui,
+    mesmo essa rota "só" alterando um registro existente.
+
+    Args:
+        todo_id (int): vem da URL (path parameter), ex.: /todos/5/concluir.
+        chat_id (int): query parameter obrigatório (`?chat_id=123`) — dono
+            esperado da tarefa; a operação só tem efeito se bater com o
+            `chat_id` real gravado no banco.
+        request (Request): usado para acessar `request.scope["env"]`.
+
+    Returns:
+        dict: {"ok": True}. Atenção: retorna {"ok": True} mesmo se nenhuma
+        linha for alterada (ex.: id/chat_id não batem) — o UPDATE não
+        gera erro nesse caso, só não afeta nenhuma linha.
+    """
     env = request.scope["env"]
     await env.DB.prepare(
-        "UPDATE todos SET feito = 1 WHERE id = ?"
-    ).bind(todo_id).run()
-    return {"ok":True}
+        "UPDATE todos SET feito = 1 WHERE id = ? AND chat_id = ?"
+    ).bind(todo_id, chat_id).run()
+    return {"ok": True}
 
 
 @app.delete("/todos/{todo_id}")
-async def remover_todo(todo_id: int, request: Request):
+async def remover_todo(todo_id: int, chat_id: int, request: Request) -> dict:
+    """Remove uma tarefa permanentemente.
+
+    Mesma lógica de segurança de `concluir_todo`: exige `id` e `chat_id`
+    corretos juntos, para impedir que um usuário apague a tarefa de outro.
+
+    Args:
+        todo_id (int): vem da URL (path parameter), ex.: /todos/5.
+        chat_id (int): query parameter obrigatório (`?chat_id=123`) — dono
+            esperado da tarefa.
+        request (Request): usado para acessar `request.scope["env"]`.
+
+    Returns:
+        dict: {"ok": True}.
+    """
     env = request.scope["env"]
     await env.DB.prepare(
-        "DELETE FROM todos WHERE id = ?"
-    ).bind(todo_id).run()
+        "DELETE FROM todos WHERE id = ? AND chat_id = ?"
+    ).bind(todo_id, chat_id).run()
+    return {"ok": True}
 
-    return {"ok":True}
 
-async def send_message(env, chat_id: int, text: str):
+async def send_message(env, chat_id: int, text: str) -> dict:
+    """Envia uma mensagem de texto simples para um chat do Telegram.
+
+    Usa o `fetch` nativo do módulo `workers` (não `requests`/`httpx` —
+    essas libs não funcionam no ambiente Pyodide dos Python Workers).
+
+    Args:
+        env: objeto de bindings do Worker (`self.env` ou
+            `request.scope["env"]`) — precisa expor `env.BOT_TOKEN`.
+        chat_id (int): identificador do chat de destino no Telegram.
+        text (str): conteúdo da mensagem a enviar.
+
+    Returns:
+        dict: corpo JSON da resposta da API do Telegram, já decodificado
+            (contém, entre outros campos, `"ok"` e, se sucesso, o objeto
+            da mensagem enviada em `"result"`).
+    """
     url = f"https://api.telegram.org/bot{env.BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
 
@@ -100,19 +271,57 @@ async def send_message(env, chat_id: int, text: str):
     )
     return await response.json()
 
+
 async def perguntar_ia(env, pergunta: str) -> str:
+    """Envia uma pergunta para a Cloudflare Workers AI e devolve a resposta em texto.
+
+    Usa o modelo `@cf/meta/llama-4-scout-17b-16e-instruct`, rodando direto
+    na infraestrutura da Cloudflare — sem necessidade de chave de API
+    externa (ex.: OpenAI). O "system prompt" abaixo define a persona do
+    bot; altere o texto ali se quiser mudar o tom das respostas.
+
+    Args:
+        env: objeto de bindings do Worker — precisa expor `env.AI`
+            (binding da Workers AI, configurado no wrangler.jsonc).
+        pergunta (str): pergunta do usuário, já sem o prefixo "/ia".
+
+    Returns:
+        str: texto da resposta gerada pelo modelo. Se a chamada não
+            devolver um campo "response" utilizável, retorna a mensagem
+            de fallback "Não consegui pensar em uma resposta agora.".
+    """
     resultado = await env.AI.run(
         "@cf/meta/llama-4-scout-17b-16e-instruct", {
-        "messages": [
-            {"role": "system", "content": "Você é o LaranBot, assistente pessoal via Telegram. Responda curto, direto, em português."}, #aqui é a persona que você vai alterar a persona da IA, caso queira
-            {"role": "user", "content": pergunta} #aqui é onde a pergunta vai entrar
-        ]
-    },
-    ) 
-    return resultado.get("response", "Não consegui pensar em uma resposta agora.") #Não se confunda, ele retorna o response (resposta), mas se der ruim ele retorna o texto "Não consegui pensar em uma resposta agora."
+            "messages": [
+                {"role": "system", "content": "Você é o LaranBot, assistente pessoal via Telegram. Responda curto, direto, em português."},  # aqui é a persona que você vai alterar a persona da IA, caso queira
+                {"role": "user", "content": pergunta}  # aqui é onde a pergunta vai entrar
+            ]
+        },
+    )
+    return resultado.get("response", "Não consegui pensar em uma resposta agora.")  # Não se confunda, ele retorna o response (resposta), mas se der ruim ele retorna o texto "Não consegui pensar em uma resposta agora."
 
 
-async def send_message_com_botoes(env, chat_id: int, text: str, botoes: list): #aqui é onde vamos colocar botões de clique para o nosso bot e facilitar a ux.
+async def send_message_com_botoes(env, chat_id: int, text: str, botoes: list) -> dict:
+    """Envia uma mensagem de texto acompanhada de um teclado inline (botões).
+
+    Diferente de um teclado normal, um teclado inline aparece dentro da
+    própria mensagem no chat. Quando o usuário clica num botão, o
+    Telegram NÃO manda uma nova mensagem — ele manda um `callback_query`
+    para a rota /webhook (ver `telegram_webhook` e `responder_callback`).
+
+    Args:
+        env: objeto de bindings do Worker — precisa expor `env.BOT_TOKEN`.
+        chat_id (int): identificador do chat de destino.
+        text (str): texto da mensagem que acompanha os botões.
+        botoes (list[list[dict]]): matriz de botões — cada item da lista
+            externa é uma LINHA do teclado; cada item da linha é um botão,
+            no formato {"text": "Rótulo visível", "callback_data": "valor"}.
+            Exemplo: [[{"text": "Meu Id", "callback_data": "myid"}]]
+            cria uma única linha com um único botão.
+
+    Returns:
+        dict: corpo JSON da resposta da API do Telegram.
+    """
     url = f"https://api.telegram.org/bot{env.BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -127,8 +336,25 @@ async def send_message_com_botoes(env, chat_id: int, text: str, botoes: list): #
     )
     return await response.json()
 
-#Ponto importante: o callbackquery não envia uma message, então você precisa utilizar o endpoint /answerCallbackQuery para obter a resposta do clique do botão, senão fica todo bugado com um carregando na tela do usuario
-async def responder_callback(env, callback_query_id: str):
+
+async def responder_callback(env, callback_query_id: str) -> None:
+    """Confirma ao Telegram que o clique num botão inline foi recebido.
+
+    Ponto importante: o callback_query não envia uma message, então você
+    precisa chamar o endpoint answerCallbackQuery para confirmar o
+    recebimento do clique — senão o botão fica visualmente "carregando",
+    travado, na tela do usuário. A própria API do Telegram espera essa
+    confirmação em até poucos segundos após o clique.
+
+    Args:
+        env: objeto de bindings do Worker — precisa expor `env.BOT_TOKEN`.
+        callback_query_id (str): identificador do callback_query recebido
+            (vem em `update["callback_query"]["id"]`, dentro do webhook).
+
+    Returns:
+        None. Esta função não repassa nem usa o corpo da resposta da API
+        do Telegram — só dispara a confirmação.
+    """
     url = f"https://api.telegram.org/bot{env.BOT_TOKEN}/answerCallbackQuery"
     payload = {"callback_query_id": callback_query_id}
     await fetch(
