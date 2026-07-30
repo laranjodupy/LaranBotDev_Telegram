@@ -110,6 +110,17 @@ async def telegram_webhook(request: Request) -> dict:
     quando ela vem preenchida. Ver também: `botoes`/`send_message_com_botoes`,
     que hoje é construído mas nunca de fato enviado ao usuário.
 
+    Comando /todo: aceita quatro formas de uso, todas tratadas no mesmo
+    bloco `if`, direto com acesso ao D1 (sem função auxiliar separada, de
+    propósito, para manter esta versão simples num único arquivo):
+        - "/todo"              -> lista as tarefas do chat que enviou
+        - "/todo add <texto>"  -> cria uma nova tarefa
+        - "/todo done <id>"    -> marca a tarefa <id> como concluída
+        - "/todo del <id>"     -> remove a tarefa <id>
+    Em todos os casos, as operações são restritas ao `chat_id` de quem
+    enviou a mensagem — mesma lógica de segurança das rotas HTTP
+    `concluir_todo`/`remover_todo` (ver docstrings delas).
+
     Args:
         request (Request): requisição HTTP recebida, com o "Update" do
             Telegram no corpo, em formato JSON.
@@ -129,7 +140,7 @@ async def telegram_webhook(request: Request) -> dict:
             [{"text": "Meu Id", "callback_data": "myid"}],
             [{"text": "Vitor eh?", "callback_data": "vitu"}]
         ]
-        await send_message(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto]")  # /start simples do bot, padrão
+        await send_message(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto], /todo")  # /start simples do bot, padrão
 
     if message and message.get("text") == "/myid":  # ainda não fui muito a fundo para saber se o message.get() serve apenas para text
         chat_id = message["chat"]["id"]
@@ -146,6 +157,55 @@ async def telegram_webhook(request: Request) -> dict:
             resposta = await perguntar_ia(env, pergunta)
             resultado_envio = await send_message(env, chat_id, resposta)
             print("Resultado do envio para fins de teste: ", resultado_envio)
+
+    if message and message.get("text", "").startswith("/todo"):
+        chat_id = message["chat"]["id"]
+        env = request.scope["env"]
+
+        # Tudo depois de "/todo" vira o "comando + argumento", ex.:
+        # "/todo add Comprar café" -> subcomando="add", argumento="Comprar café"
+        texto_comando = message["text"][len("/todo"):].strip()
+        partes = texto_comando.split(maxsplit=1)
+        subcomando = partes[0] if partes else ""
+        argumento = partes[1] if len(partes) > 1 else ""
+
+        if subcomando == "":
+            # "/todo" sozinho -> lista as tarefas do chat
+            resultado = await env.DB.prepare(
+                "SELECT id, texto, feito FROM todos WHERE chat_id = ? ORDER BY id"
+            ).bind(chat_id).all()
+            # Ajuste .results conforme o atributo exato da sua versão do binding D1
+            tarefas = resultado.results if hasattr(resultado, "results") else resultado
+            if not tarefas:
+                await send_message(env, chat_id, "Você não tem tarefas ainda. Use /todo add <texto>.")
+            else:
+                linhas = [f"{'✅' if t['feito'] else '⬜'} {t['id']}. {t['texto']}" for t in tarefas]
+                await send_message(env, chat_id, "\n".join(linhas))
+
+        elif subcomando == "add" and argumento:
+            await env.DB.prepare(
+                "INSERT INTO todos (chat_id, texto) VALUES (?, ?)"
+            ).bind(chat_id, argumento).run()
+            await send_message(env, chat_id, f"Adicionado: {argumento}")
+
+        elif subcomando == "done" and argumento.isdigit():
+            # AND chat_id garante que só o dono da tarefa consegue concluí-la
+            await env.DB.prepare(
+                "UPDATE todos SET feito = 1 WHERE id = ? AND chat_id = ?"
+            ).bind(int(argumento), chat_id).run()
+            await send_message(env, chat_id, "Marcado como feito.")
+
+        elif subcomando == "del" and argumento.isdigit():
+            await env.DB.prepare(
+                "DELETE FROM todos WHERE id = ? AND chat_id = ?"
+            ).bind(int(argumento), chat_id).run()
+            await send_message(env, chat_id, "Removido.")
+
+        else:
+            await send_message(
+                env, chat_id,
+                "Uso: /todo | /todo add <texto> | /todo done <id> | /todo del <id>"
+            )
 
     return {"ok": True}
 
