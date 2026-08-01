@@ -1,17 +1,16 @@
-"""entry.py — LaranBotDev (versão simples, monolítica)
+"""entry.py — LaranBot (boilerplate / template)
 
-Ponto de entrada único do Worker. Esta é a versão "fácil" do framework:
-toda a lógica (rotas HTTP, comandos do bot, acesso ao D1, chamadas à API
-do Telegram e à Workers AI) mora neste único arquivo, de propósito — o
-objetivo desta branch é que alguém consiga clonar o repositório, ler um
-arquivo só, e entender o fluxo completo sem precisar navegar entre módulos.
+Ponto de entrada único do Worker. Este é um boilerplate: um ponto de
+partida funcional para clonar e editar diretamente — não um framework
+(não há separação entre "núcleo" e "código do usuário", é tudo este
+arquivo). Toda a lógica (rotas HTTP, comandos do bot, acesso ao D1,
+chamadas à API do Telegram e à Workers AI) mora aqui, de propósito: o
+objetivo é que alguém consiga clonar o repositório, ler um arquivo só, e
+entender o fluxo completo sem precisar navegar entre módulos.
 
 Arquitetura, em uma frase: o Telegram manda um POST para /webhook -> o
 FastAPI processa a rota certa -> a função correspondente chama a API do
 Telegram de volta (sendMessage) e/ou consulta o banco D1.
-
-Para a versão modular (múltiplos arquivos, roteador de comandos, etc.),
-veja a branch "framework-avancado".
 """
 
 from workers import WorkerEntrypoint, fetch
@@ -104,11 +103,12 @@ async def telegram_webhook(request: Request) -> dict:
     inline), nunca os dois juntos. Por isso os dois são capturados
     separadamente logo no início da função.
 
-    TODO (pendente, próximo item do roadmap): o tratamento de
-    `callback_query` (cliques em botão) ainda não está implementado nesta
-    função — a variável `callback` é capturada, mas nenhuma ação é tomada
-    quando ela vem preenchida. Ver também: `botoes`/`send_message_com_botoes`,
-    que hoje é construído mas nunca de fato enviado ao usuário.
+    Botões inline: o bloco `if message.get("text") == "/start"` envia um
+    teclado inline (via `send_message_com_botoes`), e o bloco `if callback:`
+    no fim da função trata o clique correspondente (`callback_query`),
+    sempre confirmando o recebimento com `responder_callback` antes de
+    decidir a resposta — ver a docstring de `responder_callback` para o
+    porquê dessa confirmação ser obrigatória.
 
     Comando /todo: aceita quatro formas de uso, todas tratadas no mesmo
     bloco `if`, direto com acesso ao D1 (sem função auxiliar separada, de
@@ -138,9 +138,9 @@ async def telegram_webhook(request: Request) -> dict:
         env = request.scope["env"]
         botoes = [
             [{"text": "Meu Id", "callback_data": "myid"}],
-            [{"text": "Vitor eh?", "callback_data": "vitu"}]
+            [{"text": "laranjodev eh oq?", "callback_data": "myid"}]
         ]
-        await send_message(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto], /todo")  # /start simples do bot, padrão
+        await send_message_com_botoes(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto], /todo", botoes)  # /start simples do bot, padrão — agora chamando a função certa, com os botões de verdade
 
     if message and message.get("text") == "/myid":  # ainda não fui muito a fundo para saber se o message.get() serve apenas para text
         chat_id = message["chat"]["id"]
@@ -206,6 +206,25 @@ async def telegram_webhook(request: Request) -> dict:
                 env, chat_id,
                 "Uso: /todo | /todo add <texto> | /todo done <id> | /todo del <id>"
             )
+
+    if callback:
+        # message e callback_query nunca vêm preenchidos juntos no mesmo update
+        # (regra da própria API do Telegram) — por isso este é um "if" separado,
+        # não uma continuação do bloco de texto acima.
+        env = request.scope["env"]
+
+        # Sempre responde a query primeiro — evita o botão ficar "carregando"
+        # travado no app do usuário (limite documentado: poucos segundos).
+        await responder_callback(env, callback["id"])
+
+        chat_id = callback["message"]["chat"]["id"]
+        data = callback.get("data")  # valor de "callback_data" definido ao criar o botão
+
+        if data == "myid":
+            await send_message(env, chat_id, f"Seu chat_id é: {chat_id}")
+        elif data == "laranjo":
+            # Exemplo de segundo botão — troque por qualquer lógica sua.
+            await send_message(env, chat_id, "Lindu")
 
     return {"ok": True}
 
