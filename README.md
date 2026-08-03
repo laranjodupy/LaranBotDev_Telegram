@@ -2,9 +2,9 @@
 
 Um ponto de partida pronto para criar um chatbot pessoal no Telegram, rodando em **Cloudflare Workers (Python) + FastAPI**.
 
-> **O que isto é, com precisão:** este repositório é um **boilerplate/template**, não um framework. A diferença importa: você não vai *importar* este código como dependência — você vai **clonar, ler, editar diretamente** o arquivo `src/entry.py`, injetando seu token e sua lógica de comando ali dentro. Não existe uma "API pública" separada da implementação: o que você vê é exatamente o que você modifica.
+> **O que isto é, com precisão:** este repositório é um **boilerplate/template**, não um framework. A diferença importa: você não vai *importar* este código como dependência — você vai **clonar, ler, editar diretamente** o arquivo `src/entry.py`, injetando seu token e sua lógica de comando ali dentro.
 >
-> **Para quem é:** para quem quer aprender Cloudflare Workers, Python serverless e integração com a API do Telegram lendo e mexendo em um exemplo funcional completo — sozinho ou com apoio de uma IA guiando a leitura — sem precisar entender conceitos de arquitetura de frameworks (roteadores, injeção de dependência, pacotes instaláveis) antes de começar.
+> **Para quem é:** para quem quer aprender ou utilizar Cloudflare Workers, Python serverless e integração com a API do Telegram lendo e mexendo em um exemplo funcional completo — sozinho ou com apoio de uma IA guiando a leitura — sem precisar entender conceitos de arquitetura de frameworks (roteadores, injeção de dependência, pacotes instaláveis) antes de começar.
 
 Este README é um tutorial completo: se você nunca tocou nesse repositório, seguindo ele do início ao fim você sai com o bot rodando na sua máquina.
 
@@ -58,7 +58,7 @@ Você **não** precisa instalar Python manualmente — o `uv` resolve a versão 
 ## Primeiros passos (clonar e instalar)
 
 ```powershell
-git clone <URL_DO_SEU_REPOSITORIO>
+git clone https://github.com/laranjodupy/LaranBotDev_Telegram.git
 cd LaranBot_Telegram
 npm install   # baixa o wrangler (CLI da Cloudflare)
 uv sync       # instala fastapi, workers-py, workers-runtime-sdk; cria .venv/
