@@ -1,0 +1,212 @@
+
+#--------> NOTA DO AUTOR: Se quiser a versão sem tanta docstring, copie e cole o nodocs.txt aqui e estará tudo tranquileba :)
+
+from workers import WorkerEntrypoint, fetch
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+import json
+
+
+app = FastAPI()
+
+
+class Default(WorkerEntrypoint):
+
+    async def fetch(self, request):
+        
+        import asgi
+        return await asgi.fetch(app, request, self.env)
+
+
+class TodoCreate(BaseModel):
+   
+    chat_id: int
+    texto: str
+
+
+@app.get("/")
+async def root() -> dict:
+    
+    return {"message": "Hello, World!"}
+
+
+@app.post("/webhook")
+async def telegram_webhook(request: Request) -> dict:
+   
+    update = await request.json()
+    print(update)
+
+    message = update.get("message")
+    callback = update.get("callback_query")
+    if message and message.get("text") == "/start":
+        chat_id = message["chat"]["id"]
+        env = request.scope["env"]
+        botoes = [
+            [{"text": "Meu Id", "callback_data": "myid"}],
+            [{"text": "laranjodev eh oq?", "callback_data": "myid"}]
+        ]
+        await send_message_com_botoes(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto], /todo", botoes) 
+
+    if message and message.get("text") == "/myid": 
+        chat_id = message["chat"]["id"]
+        env = request.scope["env"]
+        await send_message(env, chat_id, f"Seu chat_id é: {chat_id}") 
+
+    if message and message.get("text", "").startswith("/ia"):
+        chat_id = message["chat"]["id"]
+        pergunta = message["text"][len("/ia"):].strip() 
+        env = request.scope["env"]
+        if not pergunta:
+            await send_message(env, chat_id, "Não mandou nada? Para utilizar o comando, utilize assim: /ia sua pergunta aqui")
+        else:
+            resposta = await perguntar_ia(env, pergunta)
+            resultado_envio = await send_message(env, chat_id, resposta)
+            print("Resultado do envio para fins de teste: ", resultado_envio)
+
+    if message and message.get("text", "").startswith("/todo"):
+        chat_id = message["chat"]["id"]
+        env = request.scope["env"]
+        texto_comando = message["text"][len("/todo"):].strip()
+        partes = texto_comando.split(maxsplit=1)
+        subcomando = partes[0] if partes else ""
+        argumento = partes[1] if len(partes) > 1 else ""
+
+        if subcomando == "":
+            resultado = await env.DB.prepare(
+                "SELECT id, texto, feito FROM todos WHERE chat_id = ? ORDER BY id"
+            ).bind(chat_id).all()
+            # Ajuste .results conforme o atributo exato da sua versão do binding D1
+            tarefas = resultado.results if hasattr(resultado, "results") else resultado
+            if not tarefas:
+                await send_message(env, chat_id, "Você não tem tarefas ainda. Use /todo add <texto>.")
+            else:
+                linhas = [f"{'✅' if t['feito'] else '⬜'} {t['id']}. {t['texto']}" for t in tarefas]
+                await send_message(env, chat_id, "\n".join(linhas))
+
+        elif subcomando == "add" and argumento:
+            await env.DB.prepare(
+                "INSERT INTO todos (chat_id, texto) VALUES (?, ?)"
+            ).bind(chat_id, argumento).run()
+            await send_message(env, chat_id, f"Adicionado: {argumento}")
+
+        elif subcomando == "done" and argumento.isdigit():
+            await env.DB.prepare(
+                "UPDATE todos SET feito = 1 WHERE id = ? AND chat_id = ?"
+            ).bind(int(argumento), chat_id).run()
+            await send_message(env, chat_id, "Marcado como feito.")
+
+        elif subcomando == "del" and argumento.isdigit():
+            await env.DB.prepare(
+                "DELETE FROM todos WHERE id = ? AND chat_id = ?"
+            ).bind(int(argumento), chat_id).run()
+            await send_message(env, chat_id, "Removido.")
+
+        else:
+            await send_message(
+                env, chat_id,
+                "Uso: /todo | /todo add <texto> | /todo done <id> | /todo del <id>"
+            )
+
+    if callback:
+       
+        env = request.scope["env"]
+
+        await responder_callback(env, callback["id"])
+
+        chat_id = callback["message"]["chat"]["id"]
+        data = callback.get("data")
+
+        if data == "myid":
+            await send_message(env, chat_id, f"Seu chat_id é: {chat_id}")
+        elif data == "laranjo":
+            await send_message(env, chat_id, "Lindu")
+
+    return {"ok": True}
+
+
+@app.post("/todos")
+async def criar_todo(todo: TodoCreate, request: Request) -> dict:
+    env = request.scope["env"]
+    await env.DB.prepare(
+        "INSERT INTO todos (chat_id, texto) VALUES (?, ?)"
+    ).bind(todo.chat_id, todo.texto).run()
+    return {"ok": True}
+
+
+@app.get("/todos")
+async def listar_todos(chat_id: int, request: Request):
+    env = request.scope["env"]
+    resultado = await env.DB.prepare(
+        "SELECT id, texto, feito FROM todos WHERE chat_id = ? ORDER BY id"
+    ).bind(chat_id).all()
+    return resultado
+
+
+@app.post("/todos/{todo_id}/concluir")
+async def concluir_todo(todo_id: int, chat_id: int, request: Request) -> dict:
+    env = request.scope["env"]
+    await env.DB.prepare(
+        "UPDATE todos SET feito = 1 WHERE id = ? AND chat_id = ?"
+    ).bind(todo_id, chat_id).run()
+    return {"ok": True}
+
+
+@app.delete("/todos/{todo_id}")
+async def remover_todo(todo_id: int, chat_id: int, request: Request) -> dict:
+    env = request.scope["env"]
+    await env.DB.prepare(
+        "DELETE FROM todos WHERE id = ? AND chat_id = ?"
+    ).bind(todo_id, chat_id).run()
+    return {"ok": True}
+
+
+async def send_message(env, chat_id: int, text: str) -> dict:
+    url = f"https://api.telegram.org/bot{env.BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+
+    response = await fetch(
+        url,
+        method="POST",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        body=json.dumps(payload),
+    )
+    return await response.json()
+
+
+async def perguntar_ia(env, pergunta: str) -> str:
+    resultado = await env.AI.run(
+        "@cf/meta/llama-4-scout-17b-16e-instruct", {
+            "messages": [
+                {"role": "system", "content": "Você é o LaranBot, assistente pessoal via Telegram. Responda curto, direto, em português."},
+                {"role": "user", "content": pergunta} 
+            ]
+        },
+    )
+    return resultado.get("response", "Não consegui pensar em uma resposta agora.")  
+
+
+async def send_message_com_botoes(env, chat_id: int, text: str, botoes: list) -> dict:
+    url = f"https://api.telegram.org/bot{env.BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": {"inline_keyboard": botoes},
+    }
+    response = await fetch(
+        url,
+        method="POST",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        body=json.dumps(payload),
+    )
+    return await response.json()
+
+
+async def responder_callback(env, callback_query_id: str) -> None:
+    url = f"https://api.telegram.org/bot{env.BOT_TOKEN}/answerCallbackQuery"
+    payload = {"callback_query_id": callback_query_id}
+    await fetch(
+        url,
+        method="POST",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        body=json.dumps(payload),
+    )

@@ -1,17 +1,9 @@
-"""entry.py — LaranBot (boilerplate / template)
+#--------> NOTAS DO CRIADOR: 
+#----------> Se quiser uma alternativa sem tanta docstring, copie o arquivo "nodocstrings.txt" e cole aqui :)
+#----------> O projeto ainda segue sujeito à mudanças, atualizações e melhorias. Ele é opensource e qualquer um pode trazer bugs, ideias e melhorias!
+#----------> E se for utilizar o projeto, dá uma estrela aí meu nobre <3 
+# Romanos 11:36 : "Porque Dele, e por Ele, e para Ele são todas as coisas; glória, pois, a Ele eternamente. Amém!"
 
-Ponto de entrada único do Worker. Este é um boilerplate: um ponto de
-partida funcional para clonar e editar diretamente — não um framework
-(não há separação entre "núcleo" e "código do usuário", é tudo este
-arquivo). Toda a lógica (rotas HTTP, comandos do bot, acesso ao D1,
-chamadas à API do Telegram e à Workers AI) mora aqui, de propósito: o
-objetivo é que alguém consiga clonar o repositório, ler um arquivo só, e
-entender o fluxo completo sem precisar navegar entre módulos.
-
-Arquitetura, em uma frase: o Telegram manda um POST para /webhook -> o
-FastAPI processa a rota certa -> a função correspondente chama a API do
-Telegram de volta (sendMessage) e/ou consulta o banco D1.
-"""
 
 from workers import WorkerEntrypoint, fetch
 from fastapi import FastAPI, Request
