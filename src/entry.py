@@ -9,6 +9,7 @@ from workers import WorkerEntrypoint, fetch
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 import json
+import simula_banco  # EXCEÇÃO DOCUMENTADA à regra "tudo inline" — ver simula_banco.py e README.md
 
 
 app = FastAPI()
@@ -132,7 +133,7 @@ async def telegram_webhook(request: Request) -> dict:
             [{"text": "Meu Id", "callback_data": "myid"}],
             [{"text": "laranjodev eh oq?", "callback_data": "myid"}]
         ]
-        await send_message_com_botoes(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto], /todo", botoes)  # /start simples do bot, padrão — agora chamando a função certa, com os botões de verdade
+        await send_message_com_botoes(env, chat_id, "Eae mofiu, esse é o LaranBot. \n -> Os nossos comandos são: /myid, /ia [seu_texto], /todo, /simula_banco", botoes)  # /start simples do bot, padrão — agora chamando a função certa, com os botões de verdade
 
     if message and message.get("text") == "/myid":  # ainda não fui muito a fundo para saber se o message.get() serve apenas para text
         chat_id = message["chat"]["id"]
@@ -197,6 +198,94 @@ async def telegram_webhook(request: Request) -> dict:
             await send_message(
                 env, chat_id,
                 "Uso: /todo | /todo add <texto> | /todo done <id> | /todo del <id>"
+            )
+
+    if message and message.get("text", "").startswith("/simula_banco"):
+        # Este bloco só faz PARSING de comando e formatação de resposta —
+        # toda a regra de negócio (saldo, transferência, histórico) vive em
+        # simula_banco.py, a exceção documentada à regra "tudo inline" desta versão.
+        chat_id = message["chat"]["id"]
+        env = request.scope["env"]
+
+        texto_comando = message["text"][len("/simula_banco"):].strip()
+        partes = texto_comando.split(maxsplit=1)
+        subcomando = partes[0] if partes else ""
+        argumento = partes[1] if len(partes) > 1 else ""
+
+        if subcomando in ("", "saldo"):
+            saldo = await simula_banco.consultar_saldo(env, chat_id)
+            await send_message(env, chat_id, f"Seu saldo: {simula_banco.formatar_reais(saldo)}")
+
+        elif subcomando == "depositar" and argumento:
+            centavos = simula_banco.reais_para_centavos(argumento)
+            if centavos is None:
+                await send_message(env, chat_id, "Valor inválido. Use, por exemplo: /simula_banco depositar 10.50")
+            else:
+                novo_saldo = await simula_banco.depositar(env, chat_id, centavos)
+                await send_message(
+                    env, chat_id,
+                    f"Depositado {simula_banco.formatar_reais(centavos)}. Novo saldo: {simula_banco.formatar_reais(novo_saldo)}",
+                )
+
+        elif subcomando == "sacar" and argumento:
+            centavos = simula_banco.reais_para_centavos(argumento)
+            if centavos is None:
+                await send_message(env, chat_id, "Valor inválido. Use, por exemplo: /simula_banco sacar 10.50")
+            else:
+                sucesso, saldo_atual = await simula_banco.sacar(env, chat_id, centavos)
+                if sucesso:
+                    await send_message(
+                        env, chat_id,
+                        f"Sacado {simula_banco.formatar_reais(centavos)}. Novo saldo: {simula_banco.formatar_reais(saldo_atual)}",
+                    )
+                else:
+                    await send_message(
+                        env, chat_id,
+                        f"Saldo insuficiente. Seu saldo atual: {simula_banco.formatar_reais(saldo_atual)}",
+                    )
+
+        elif subcomando == "transferir" and argumento:
+            partes_arg = argumento.split(maxsplit=1)
+            if len(partes_arg) != 2 or not partes_arg[0].isdigit():
+                await send_message(env, chat_id, "Uso: /simula_banco transferir <chat_id_destino> <valor>")
+            else:
+                chat_id_destino = int(partes_arg[0])
+                centavos = simula_banco.reais_para_centavos(partes_arg[1])
+                if centavos is None:
+                    await send_message(env, chat_id, "Valor inválido.")
+                else:
+                    sucesso, erro = await simula_banco.transferir(env, chat_id, chat_id_destino, centavos)
+                    if sucesso:
+                        await send_message(
+                            env, chat_id,
+                            f"Transferido {simula_banco.formatar_reais(centavos)} para {chat_id_destino}.",
+                        )
+                    else:
+                        await send_message(env, chat_id, f"Não foi possível transferir: {erro}")
+
+        elif subcomando == "historico":
+            transacoes = await simula_banco.historico(env, chat_id)
+            if not transacoes:
+                await send_message(env, chat_id, "Nenhuma transação ainda.")
+            else:
+                linhas = []
+                for t in transacoes:
+                    valor_fmt = simula_banco.formatar_reais(t["valor_centavos"])
+                    if t["tipo"] == "deposito":
+                        linhas.append(f"⬆️ Depósito de {valor_fmt}")
+                    elif t["tipo"] == "saque":
+                        linhas.append(f"⬇️ Saque de {valor_fmt}")
+                    elif t["chat_id_origem"] == chat_id:
+                        linhas.append(f"➡️ Enviado {valor_fmt} para {t['chat_id_destino']}")
+                    else:
+                        linhas.append(f"⬅️ Recebido {valor_fmt} de {t['chat_id_origem']}")
+                await send_message(env, chat_id, "\n".join(linhas))
+
+        else:
+            await send_message(
+                env, chat_id,
+                "Uso: /simula_banco | /simula_banco saldo | /simula_banco depositar <valor> | /simula_banco sacar <valor> | "
+                "/simula_banco transferir <chat_id> <valor> | /simula_banco historico",
             )
 
     if callback:
@@ -276,7 +365,7 @@ async def concluir_todo(todo_id: int, chat_id: int, request: Request) -> dict:
         todo_id (int): vem da URL (path parameter), ex.: /todos/5/concluir.
         chat_id (int): query parameter obrigatório (`?chat_id=123`) — dono
             esperado da tarefa; a operação só tem efeito se bater com o
-            `chat_id` real gravado no banco.
+            `chat_id` real gravado no simula_banco.
         request (Request): usado para acessar `request.scope["env"]`.
 
     Returns:
